@@ -5,6 +5,7 @@ local sprint_anim = CreateConVar("cl_ehw_sprint_animation", 1, FCVAR_ARCHIVE)
 local effect_mult = CreateConVar("cl_ehw_effect_mult", 1, FCVAR_ARCHIVE)
 local down_offset = CreateConVar("cl_ehw_down_offset_mult", 1, FCVAR_ARCHIVE)
 local walk_viewbob_speed_mult = CreateConVar("cl_ehw_walk_bob_speed_mult", 1, FCVAR_ARCHIVE)
+local use_calcview = CreateConVar("cl_ehw_use_calcview", 1, FCVAR_ARCHIVE)
 
 local lpos = Vector()
 local lang = Angle()
@@ -93,20 +94,9 @@ hook.Add("InputMouseApply", "ehw_mouse", function(cmd, x, y, ang)
     gy = Lerp(FrameTime() * lerp_speed:GetFloat(), gy, math.Clamp(y / 2, -range, range))
 end)
 
-local function set_random_entity()
-    if IsValid(random_entity) then return end
-
-    local lp = LocalPlayer()
-    for i, ent in ipairs(ents.GetAll()) do
-        if ent != lp and IsValid(ent) then random_entity = ent end
-    end
-end
-
 concommand.Add("+ehw_zoom", function()
     if not enabled:GetBool() then return end
     if not is_allowed then return end
-
-    set_random_entity()
 
     local lp = LocalPlayer()
     zoomed = true
@@ -115,14 +105,14 @@ concommand.Add("+ehw_zoom", function()
     net.WriteBool(true)
     net.SendToServer()
 
-    LocalPlayer():SetFOV(70, 0.6, random_entity)
+    if use_calcview:GetBool() then return end
+
+    LocalPlayer():SetFOV(GetConVar("fov_desired"):GetFloat() - 20, 0.6)
 end)
 
 concommand.Add("-ehw_zoom", function()
     if not enabled:GetBool() then return end
     if not is_allowed then return end
-
-    set_random_entity()
 
     local lp = LocalPlayer()
     zoomed = false
@@ -131,7 +121,9 @@ concommand.Add("-ehw_zoom", function()
     net.WriteBool(false)
     net.SendToServer()
 
-    LocalPlayer():SetFOV(0, 0.5, random_entity)
+    if use_calcview:GetBool() then return end
+
+    LocalPlayer():SetFOV(0, 0.6)
 end)
 
 hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang) 
@@ -256,4 +248,25 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
 
     lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
     lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
+end)
+
+local EHW_CALC = false
+hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov, znear, zfar) 
+    if EHW_CALC or not enabled:GetBool() or not use_calcview:GetBool() or not is_allowed or frac_zoom <= 0 then return end
+
+    EHW_CALC = true
+	local base_view = hook.Run("CalcView", ply, origin, angles, fov, znear, zfar)
+	if base_view then
+		origin, angles, fov, znear, zfar, drawviewer = base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false
+	end
+	EHW_CALC = false
+
+    local view = {
+		origin = origin,
+		angles = angles,
+		fov = fov - 20 * math.ease.InOutQuad(frac_zoom),
+        drawviewer = drawviewer
+	}
+
+    return view
 end)
