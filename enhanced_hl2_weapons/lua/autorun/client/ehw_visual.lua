@@ -1,6 +1,10 @@
 local enabled = CreateConVar("cl_ehw_enabled", 1, FCVAR_ARCHIVE)
 local lerp_speed = CreateConVar("cl_ehw_lerp_speed", 10, FCVAR_ARCHIVE)
 local clamp_num = CreateConVar("cl_ehw_clamp_mouse", 50, FCVAR_ARCHIVE)
+local sprint_anim = CreateConVar("cl_ehw_sprint_animation", 1, FCVAR_ARCHIVE)
+local effect_mult = CreateConVar("cl_ehw_effect_mult", 1, FCVAR_ARCHIVE)
+local down_offset = CreateConVar("cl_ehw_down_offset_mult", 1, FCVAR_ARCHIVE)
+local walk_viewbob_speed_mult = CreateConVar("cl_ehw_walk_bob_speed_mult", 1, FCVAR_ARCHIVE)
 
 local lpos = Vector()
 local lang = Angle()
@@ -22,7 +26,9 @@ local frac_zoom = 1
 
 local sprint_curtime = 0
 
-local mmod_replacement = GetConVar("mmod_replacements_lense")
+local random_entity = NULL
+
+local lmult = 0
 
 local allowed = {
     weapon_357 = true,
@@ -87,9 +93,21 @@ hook.Add("InputMouseApply", "ehw_mouse", function(cmd, x, y, ang)
     gy = Lerp(FrameTime() * lerp_speed:GetFloat(), gy, math.Clamp(y / 2, -range, range))
 end)
 
+local function set_random_entity()
+    if IsValid(random_entity) then return end
+
+    local lp = LocalPlayer()
+    for i, ent in ipairs(ents.GetAll()) do
+        if ent != lp and IsValid(ent) then random_entity = ent end
+    end
+end
+
 concommand.Add("+ehw_zoom", function()
     if not enabled:GetBool() then return end
     if not is_allowed then return end
+
+    set_random_entity()
+
     local lp = LocalPlayer()
     zoomed = true
     lp.ehw_zoomed = true
@@ -97,12 +115,15 @@ concommand.Add("+ehw_zoom", function()
     net.WriteBool(true)
     net.SendToServer()
 
-    LocalPlayer():SetFOV(70, 0.6)
+    LocalPlayer():SetFOV(70, 0.6, random_entity)
 end)
 
 concommand.Add("-ehw_zoom", function()
     if not enabled:GetBool() then return end
     if not is_allowed then return end
+
+    set_random_entity()
+
     local lp = LocalPlayer()
     zoomed = false
     lp.ehw_zoomed = false
@@ -110,7 +131,7 @@ concommand.Add("-ehw_zoom", function()
     net.WriteBool(false)
     net.SendToServer()
 
-    LocalPlayer():SetFOV(0, 0.5)
+    LocalPlayer():SetFOV(0, 0.5, random_entity)
 end)
 
 hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang) 
@@ -120,11 +141,12 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
 
     if not is_allowed then return end
 
-    local curtime = CurTime()
+    local curtime = UnPredictedCurTime()
     local frametime = FrameTime()
     local up = ang:Up()
     local right = ang:Right()
     local forward = ang:Forward()
+    local lp = LocalPlayer()
 
     // angle offset
     local a = Angle(gy, -gx, (gx + gy) / 2)
@@ -141,58 +163,72 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     v:Add(_drunk_pos)
 
     // zoom offset
+    local fz_later = 0
     if zoomed then
-        frac_zoom = math.Clamp(frac_zoom + frametime * 2, 0, 1)
+        frac_zoom = math.Clamp(frac_zoom + frametime, 0, 1)
+        fz_later = frametime
         a:Mul(0.5) 
         v:Mul(0.5)
     else
-        frac_zoom = math.Clamp(frac_zoom - frametime * 2, 0, 1)
+        frac_zoom = math.Clamp(frac_zoom - frametime, 0, 1)
+        fz_later = -frametime
     end
 
     v:Add((right * -20 + up * 10) * ease(frac_zoom, zoomed))
-    
-    // walk viewbob
-    local vel = LocalPlayer():GetVelocity():Length()
-    local trying_to_move = LocalPlayer():KeyDown(IN_FORWARD) or LocalPlayer():KeyDown(IN_BACK) or LocalPlayer():KeyDown(IN_MOVELEFT) or LocalPlayer():KeyDown(IN_MOVERIGHT)
 
-    local maxspeed = math.max(1, LocalPlayer():GetMaxSpeed()) // just in case some evil mod does this...
+    frac_zoom = math.Clamp(frac_zoom + fz_later, 0, 1)
+
+    // walk viewbob
+    local vel = lp:GetVelocity():Length()
+    local trying_to_move = lp:KeyDown(IN_FORWARD) or lp:KeyDown(IN_BACK) or lp:KeyDown(IN_MOVELEFT) or lp:KeyDown(IN_MOVERIGHT)
+
+    local maxspeed = math.max(1, lp:GetMaxSpeed()) // just in case some evil mod does this...
     local mult = math.Clamp(vel, 0, maxspeed)
 
-    sprint_curtime = sprint_curtime + frametime * mult / 100
+    sprint_curtime = sprint_curtime + frametime * mult / 100 * walk_viewbob_speed_mult:GetFloat()
 
-    local walk_view = Angle(math.cos(sprint_curtime / 0.7), 
-                             math.sin(sprint_curtime / 0.6), 
-                             math.sin(sprint_curtime / 0.5))
-    local walk_pos = Vector(math.sin(sprint_curtime / 0.4),
-                            math.cos(sprint_curtime / 0.5),
-                            math.sin(sprint_curtime / 0.3))
+    local walk_pos = Vector(0,
+                            math.sin(sprint_curtime * 2),
+                            math.cos(sprint_curtime * 2) / 2)
+    local walk_view = Angle(-walk_pos.x, -walk_pos.y, 0)
     local _walk_pos, _ = LocalToWorld(walk_pos, Angle(), Vector(), ang)
-    a:Add(walk_view * 2 * mult / maxspeed)
-    v:Add(_walk_pos * mult / maxspeed)
+
+    lmult = Lerp(frametime * 2, lmult, mult / 100)
+
+    a:Add(walk_view * 2 * lmult)
+    v:Add(_walk_pos * 2 * lmult)
 
     // sprint "anims"
     // i eated glue when writing this
-    if not mmod_replacement then
+    if sprint_anim:GetBool() then
         local downwards = false
-        local in_speed = LocalPlayer():KeyDown(IN_SPEED)
-        local in_attack = LocalPlayer():KeyDown(IN_ATTACK) or LocalPlayer():KeyDown(IN_ATTACK2)
+        local in_speed = lp:KeyDown(IN_SPEED)
+        local in_attack = lp:KeyDown(IN_ATTACK) or lp:KeyDown(IN_ATTACK2)
         local mult = lerp_speed:GetFloat() / 10
 
+        local fs2_later = 0
+        local fs_later = 0
+        
         if in_speed and trying_to_move then
             if wait_after_shoot <= 0 then
-                frac_sprint = math.Clamp(frac_sprint + frametime * 2 * mult, 0, 1)
+                frac_sprint = math.Clamp(frac_sprint + frametime * mult, 0, 1)
+                fs_later = frametime * mult
             end
-            frac_sprint2 = math.Clamp(frac_sprint2 + frametime * 2 * mult, 0, 1)
+            frac_sprint2 = math.Clamp(frac_sprint2 + frametime * mult, 0, 1)
+            fs2_later = frametime * mult
             downwards = true
         else
-            frac_sprint = math.Clamp(frac_sprint - frametime * 2 * mult, 0, 1)
-            frac_sprint2 = math.Clamp(frac_sprint2 - frametime * 2 * mult, 0, 1)
+            frac_sprint = math.Clamp(frac_sprint - frametime * mult, 0, 1)
+            fs_later = -frametime * mult
+            frac_sprint2 = math.Clamp(frac_sprint2 - frametime * mult, 0, 1)
+            fs2_later = -frametime * mult
             downwards = false
         end
 
         if in_attack then
             downwards = false
-            frac_sprint = math.Clamp(frac_sprint - frametime * 100 * mult, 0, 1)
+            frac_sprint = math.Clamp(frac_sprint - frametime * 100 * mult / 2, 0, 1)
+            fs_later = -frametime * 100 * mult / 2
             v:Sub(up * 20 * ease(frac_sprint2, downwards))
             if in_speed then
                 wait_after_shoot = 1
@@ -203,15 +239,21 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         end
 
         a:Add(Angle(30, 20, 0) * ease(frac_sprint, downwards))
+
+        frac_sprint = math.Clamp(frac_sprint + fs_later, 0, 1)
+        frac_sprint2 = math.Clamp(frac_sprint2 + fs2_later, 0, 1)
     end
 
     // down offset
-    v:Sub(up) 
+    v:Sub(up * down_offset:GetFloat()) 
 
     // lerp it and set it
-    lpos = LerpVector(frametime * lerp_speed:GetFloat(), lpos, v * 0.1)
-    lang = LerpAngle(frametime * lerp_speed:GetFloat(), lang, a * 0.3)
+    lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
+    lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
     
-    pos:Add(lpos)
-    ang:Add(lang)
+    pos:Add(lpos * effect_mult:GetFloat())
+    ang:Add(lang * effect_mult:GetFloat())
+
+    lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
+    lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
 end)
