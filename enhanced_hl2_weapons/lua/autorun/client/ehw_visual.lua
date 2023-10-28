@@ -4,6 +4,7 @@ local clamp_num = CreateConVar("cl_ehw_clamp_mouse", 50, FCVAR_ARCHIVE)
 local sprint_anim = CreateConVar("cl_ehw_sprint_animation", 1, FCVAR_ARCHIVE)
 local effect_mult = CreateConVar("cl_ehw_effect_mult", 1, FCVAR_ARCHIVE)
 local down_offset = CreateConVar("cl_ehw_down_offset_mult", 1, FCVAR_ARCHIVE)
+local land_mult = CreateConVar("cl_ehw_land_mult", 1, FCVAR_ARCHIVE)
 local walk_viewbob_speed_mult = CreateConVar("cl_ehw_walk_bob_speed_mult", 1, FCVAR_ARCHIVE)
 local use_calcview = CreateConVar("cl_ehw_use_calcview", 1, FCVAR_ARCHIVE)
 
@@ -24,10 +25,13 @@ local frac_sprint2 = 1
 local wait_after_shoot = 0
 
 local frac_zoom = 1
+local frac_land = 0
+local lerped_frac_land = 0
 
 local sprint_curtime = 0
 
-local random_entity = NULL
+local prev_on_ground = true
+local current_on_ground = true
 
 local lmult = 0
 
@@ -126,6 +130,15 @@ concommand.Add("-ehw_zoom", function()
     LocalPlayer():SetFOV(0, 0.6)
 end)
 
+hook.Add("Think", "ehw_detect_land", function()
+    // onplayerhitground is predicted so it's gae
+    prev_on_ground = current_on_ground
+    current_on_ground = LocalPlayer():OnGround()
+    if prev_on_ground != current_on_ground and current_on_ground then
+        frac_land = 1
+    end
+end)
+
 hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang) 
     if not enabled:GetBool() then return end
 
@@ -155,20 +168,26 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     v:Add(_drunk_pos)
 
     // zoom offset
-    local fz_later = 0
     if zoomed then
-        frac_zoom = math.Clamp(frac_zoom + frametime, 0, 1)
-        fz_later = frametime
+        frac_zoom = math.Clamp(frac_zoom + frametime * 2, 0, 1)
         a:Mul(0.5) 
         v:Mul(0.5)
     else
-        frac_zoom = math.Clamp(frac_zoom - frametime, 0, 1)
-        fz_later = -frametime
+        frac_zoom = math.Clamp(frac_zoom - frametime * 2, 0, 1)
     end
 
-    v:Add((right * -20 + up * 10) * ease(frac_zoom, zoomed))
+    if frac_zoom > 0 then
+        v:Add((right * -20 + up * 10) * ease(frac_zoom, zoomed))
+    end
 
-    frac_zoom = math.Clamp(frac_zoom + fz_later, 0, 1)
+    // land offset
+    frac_land = math.max(0, frac_land - frametime * 2)
+    if frac_land > 0 then
+        local eased_frac_land = math.ease.InOutQuad(frac_land) * land_mult:GetFloat()
+        v:Sub(up * eased_frac_land * 2.5)
+        v:Sub(forward * eased_frac_land * 5)
+        a:Add(Angle(5, 0, 10) * eased_frac_land)
+    end
 
     // walk viewbob
     local vel = lp:GetVelocity():Length()
@@ -197,30 +216,22 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         local in_speed = lp:KeyDown(IN_SPEED)
         local in_attack = lp:KeyDown(IN_ATTACK) or lp:KeyDown(IN_ATTACK2)
         local mult = lerp_speed:GetFloat() / 10
-
-        local fs2_later = 0
-        local fs_later = 0
         
         if in_speed and trying_to_move then
             if wait_after_shoot <= 0 then
-                frac_sprint = math.Clamp(frac_sprint + frametime * mult, 0, 1)
-                fs_later = frametime * mult
+                frac_sprint = math.Clamp(frac_sprint + frametime * mult * 2, 0, 1)
             end
-            frac_sprint2 = math.Clamp(frac_sprint2 + frametime * mult, 0, 1)
-            fs2_later = frametime * mult
+            frac_sprint2 = math.Clamp(frac_sprint2 + frametime * mult * 2, 0, 1)
             downwards = true
         else
-            frac_sprint = math.Clamp(frac_sprint - frametime * mult, 0, 1)
-            fs_later = -frametime * mult
-            frac_sprint2 = math.Clamp(frac_sprint2 - frametime * mult, 0, 1)
-            fs2_later = -frametime * mult
+            frac_sprint = math.Clamp(frac_sprint - frametime * mult * 2, 0, 1)
+            frac_sprint2 = math.Clamp(frac_sprint2 - frametime * mult * 2, 0, 1)
             downwards = false
         end
 
         if in_attack then
             downwards = false
-            frac_sprint = math.Clamp(frac_sprint - frametime * 100 * mult / 2, 0, 1)
-            fs_later = -frametime * 100 * mult / 2
+            frac_sprint = math.Clamp(frac_sprint - frametime * 100 * mult, 0, 1)
             v:Sub(up * 20 * ease(frac_sprint2, downwards))
             if in_speed then
                 wait_after_shoot = 1
@@ -231,23 +242,17 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         end
 
         a:Add(Angle(30, 20, 0) * ease(frac_sprint, downwards))
-
-        frac_sprint = math.Clamp(frac_sprint + fs_later, 0, 1)
-        frac_sprint2 = math.Clamp(frac_sprint2 + fs2_later, 0, 1)
     end
 
     // down offset
     v:Sub(up * down_offset:GetFloat()) 
 
     // lerp it and set it
-    lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
-    lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
+    lpos = LerpVector(frametime * lerp_speed:GetFloat(), lpos, v * 0.1)
+    lang = LerpAngle(frametime * lerp_speed:GetFloat(), lang, a * 0.3)
     
     pos:Add(lpos * effect_mult:GetFloat())
     ang:Add(lang * effect_mult:GetFloat())
-
-    lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
-    lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
 end)
 
 local EHW_CALC = false
