@@ -255,16 +255,26 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     ang:Add(lang * effect_mult:GetFloat())
 end)
 
-local EHW_CALC = false
-hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov, znear, zfar) 
-    if EHW_CALC or not enabled:GetBool() or not use_calcview:GetBool() or not is_allowed or frac_zoom <= 0 then return end
+hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov, znear, zfar)
+    if not enabled:GetBool() or not use_calcview:GetBool() or not is_allowed or frac_zoom <= 0 then return end
 
-    EHW_CALC = true
-	local base_view = hook.Run("CalcView", ply, origin, angles, fov, znear, zfar)
-	if base_view then
-		origin, angles, fov, znear, zfar, drawviewer = base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false
-	end
-	EHW_CALC = false
+    local base_view = {}
+    local need_to_run = false
+    for name, func in pairs(hook.GetTable()["CalcView"]) do
+        if name == "ehw_idontlikethisatall" then 
+            need_to_run = true
+            continue 
+        end
+        if not need_to_run then 
+            continue 
+        end
+        local ret = func(ply, base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false)
+        base_view = ret or base_view
+    end
+
+    if base_view then
+        origin, angles, fov, znear, zfar, drawviewer = base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false
+    end
 
     local view = {
 		origin = origin,
