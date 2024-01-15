@@ -272,6 +272,17 @@ hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov
         base_view = ret or base_view
     end
 
+    local weapon = ply:GetActiveWeapon()
+
+    if IsValid(weapon) then
+        local func = weapon.CalcView
+        if func then
+            local origin, angles, fov = func(weapon, ply, base_view.origin or origin, base_view.angles or angles, base_view.fov or fov)
+            base_view.origin, base_view.angles, base_view.fov = origin or base_view.origin, angles or base_view.angles, fov or base_view.fov
+        end
+    end
+
+
     if base_view then
         origin, angles, fov, znear, zfar, drawviewer = base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false
     end
