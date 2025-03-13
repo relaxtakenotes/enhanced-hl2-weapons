@@ -209,9 +209,9 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         ang:Set(oldang)
     end
 
-    local frametime = FrameTime() * engine.TickInterval() * 22
+    local frametime = RealFrameTime()
 
-    local curtime = CurTime()
+    local curtime = UnPredictedCurTime()
     local up = ang:Up()
     local right = ang:Right()
     local forward = ang:Forward()
@@ -265,28 +265,38 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
             ms = hook.Run("PlayerStepSoundTime", lp, 0, lp:KeyDown(IN_WALK))
         end
 
-        if ms != 0 then
+        if ms != 0 and ms != math.huge then
             local maxspeed = math.max(1, lp:GetMaxSpeed()) // just in case some evil mod does this...
             local vel = lp:GetVelocity():Length()
             local mult = math.Clamp(vel, 0, maxspeed)
 
-            add_sprint_curtime = frametime / ms * 2500
-            lerped_add_sprint_curtime = Lerp(frametime * 10, lerped_add_sprint_curtime, add_sprint_curtime)
+            local coof = math.pi / (ms / 1000)
 
+            add_sprint_curtime = frametime * coof - frametime * ms / 2000 - frametime
+            if not trying_to_move then
+                add_sprint_curtime = 0
+            end
+            
+            lerped_add_sprint_curtime = Lerp(frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
             sprint_curtime = sprint_curtime + lerped_add_sprint_curtime
+            lerped_add_sprint_curtime = Lerp(frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
 
-            local walk_pos = Vector(math.cos(sprint_curtime * 2) / 2, math.cos(sprint_curtime), math.cos(sprint_curtime) / 4)
+            local walk_pos = Vector(math.cos(sprint_curtime * 2) / 2, math.cos(sprint_curtime), math.cos(sprint_curtime) / 4) + 
+                Vector(math.sin(sprint_curtime * 2) / 4, math.sin(sprint_curtime) / 2, math.sin(sprint_curtime / 2) / 16)
 
             local walk_view = Angle(-walk_pos.x, -walk_pos.y, 0)
             local _walk_pos, _ = LocalToWorld(walk_pos, Angle(), Vector(), ang)
 
-            lmult = Lerp(frametime * 30, lmult, mult / 100)
-
-            lerped_walk_bob_pos = LerpVector(frametime * 70, lerped_walk_bob_pos, _walk_pos)
-            lerped_walk_bob_ang = LerpAngle(frametime * 70, lerped_walk_bob_ang, walk_view)
-
+            lerped_walk_bob_pos = LerpVector(frametime * 35, lerped_walk_bob_pos, _walk_pos)
+            lerped_walk_bob_ang = LerpAngle(frametime * 35, lerped_walk_bob_ang, walk_view)
+            
+            lmult = Lerp(frametime * 15, lmult, mult / 100)
             a:Add(lerped_walk_bob_ang * 2 * lmult)
             v:Add(lerped_walk_bob_pos * 2 * lmult)
+            lmult = Lerp(frametime * 15, lmult, mult / 100)
+
+            lerped_walk_bob_pos = LerpVector(frametime * 35, lerped_walk_bob_pos, _walk_pos)
+            lerped_walk_bob_ang = LerpAngle(frametime * 35, lerped_walk_bob_ang, walk_view)
         end
     else
 
@@ -336,11 +346,14 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     v:Sub(up * down_offset:GetFloat())
 
     // lerp it and set it
-    lpos = LerpVector(frametime * lerp_speed:GetFloat(), lpos, v * 0.1)
-    lang = LerpAngle(frametime * lerp_speed:GetFloat(), lang, a * 0.3)
+    lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
+    lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
 
     pos:Add(lpos * effect_mult:GetFloat())
     ang:Add(lang * effect_mult:GetFloat())
+
+    lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2, lpos, v * 0.1)
+    lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2, lang, a * 0.3)
 end)
 
 local last_realtime = 0
