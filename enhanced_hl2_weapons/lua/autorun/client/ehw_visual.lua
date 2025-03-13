@@ -5,8 +5,14 @@ local sprint_anim = CreateConVar("cl_ehw_sprint_animation", 1, FCVAR_ARCHIVE)
 local effect_mult = CreateConVar("cl_ehw_effect_mult", 1, FCVAR_ARCHIVE)
 local down_offset = CreateConVar("cl_ehw_down_offset_mult", 1, FCVAR_ARCHIVE)
 local land_mult = CreateConVar("cl_ehw_land_mult", 1, FCVAR_ARCHIVE)
-local walk_viewbob_speed_mult = CreateConVar("cl_ehw_walk_bob_speed_mult", 1, FCVAR_ARCHIVE)
 local use_calcview = CreateConVar("cl_ehw_use_calcview", 1, FCVAR_ARCHIVE)
+local tilt_vm = CreateConVar("cl_ehw_tilt_vm", 1, FCVAR_ARCHIVE)
+
+local use_viewpunch = CreateConVar("cl_ehw_use_viewpunch_walk", 0, FCVAR_ARCHIVE)
+local viewpunch_strength = CreateConVar("cl_ehw_viewpunch_strength", 1, FCVAR_ARCHIVE)
+local override = CreateConVar("cl_ehw_override", 0, FCVAR_ARCHIVE)
+
+local sp = game.SinglePlayer()
 
 local lpos = Vector()
 local lang = Angle()
@@ -50,16 +56,16 @@ local allowed = {
     weapon_smg1 = true,
     weapon_stunstick = true
 }
-if not file.Exists("ehw_allowed.json", "DATA") then 
-    file.Write("ehw_allowed.json", util.TableToJSON(allowed, true)) 
+if not file.Exists("ehw_allowed.json", "DATA") then
+    file.Write("ehw_allowed.json", util.TableToJSON(allowed, true))
 end
 allowed = util.JSONToTable(file.Read("ehw_allowed.json"))
 
 local is_allowed = false
 
-concommand.Add("cl_ehw_toggle_weapon", function(ply, cmd, args, arg_str) 
+concommand.Add("cl_ehw_toggle_weapon", function(ply, cmd, args, arg_str)
 	_usage = "Usage: cl_ehw_allow_weapon weapon_class\nIf weapon_class isn't provided, the current weapon is used."
-	
+
 	print(_usage)
 
 	local weapon_class = args[1] or NULL
@@ -77,7 +83,7 @@ concommand.Add("cl_ehw_toggle_weapon", function(ply, cmd, args, arg_str)
         allowed[weapon_class] = true
     end
 
-	file.Write("ehw_allowed.json", util.TableToJSON(allowed, true)) 
+	file.Write("ehw_allowed.json", util.TableToJSON(allowed, true))
 
 	print(weapon_class..": toggled")
 end)
@@ -90,7 +96,7 @@ local function ease(t, downwards)
     end
 end
 
-hook.Add("InputMouseApply", "ehw_mouse", function(cmd, x, y, ang) 
+hook.Add("InputMouseApply", "ehw_mouse", function(cmd, x, y, ang)
     if not enabled:GetBool() then return end
     if not is_allowed then return end
     local range = clamp_num:GetFloat()
@@ -130,6 +136,12 @@ concommand.Add("-ehw_zoom", function()
     LocalPlayer():SetFOV(0, 0.6)
 end)
 
+local vp_punch_angle = Angle()
+local vp_punch_angle_velocity = Angle()
+
+local vp_punch_angle2 = Angle()
+local vp_punch_angle_velocity2 = Angle()
+
 hook.Add("Think", "ehw_detect_land", function()
     // onplayerhitground is predicted so it's gae
     prev_on_ground = current_on_ground
@@ -137,17 +149,69 @@ hook.Add("Think", "ehw_detect_land", function()
     if prev_on_ground != current_on_ground and current_on_ground then
         frac_land = 1
     end
+
+    if prev_on_ground != current_on_ground and !current_on_ground and LocalPlayer():KeyDown(IN_JUMP) then
+        vp_punch_angle_velocity = vp_punch_angle_velocity + Angle(-20, 0, 0) * viewpunch_strength:GetFloat()
+        vp_punch_angle_velocity2 = vp_punch_angle_velocity2 + Angle(-30, 0, 0) * viewpunch_strength:GetFloat()
+    end
 end)
 
-hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang) 
+local function process_viewpunch(ang, vel, damp, spring)
+	if not ang:IsZero() or not vel:IsZero() then
+		ang:Add(vel * FrameTime())
+		local damping = 1 - (damp * FrameTime())
+
+		if damping < 0 then damping = 0 end
+
+		vel:Mul(damping)
+
+		local spring_force_magnitude = math.Clamp(spring * FrameTime(), 0, 0.2 / FrameTime())
+
+		vel:Sub(ang * spring_force_magnitude)
+
+		local x, y, z = ang:Unpack()
+		ang.x = math.Clamp(x, -89, 89)
+		ang.y = math.Clamp(y, -179, 179)
+		ang.z = math.Clamp(z, -89, 89)
+	else
+		ang:Zero()
+		vel:Zero()
+	end
+
+	if ang:IsZero() and vel:IsZero() then return end
+
+	if LocalPlayer():InVehicle() then return end
+end
+
+hook.Add("Think", "vm_viewpunch_think", function()
+	process_viewpunch(vp_punch_angle, vp_punch_angle_velocity, 15, 50)
+	process_viewpunch(vp_punch_angle2, vp_punch_angle_velocity2, 10, 70)
+end)
+
+local vm_last_realtime = 0
+local vm_realtime = 0
+
+local lerped_add_sprint_curtime = 0
+local add_sprint_curtime = 0
+
+local lerped_walk_bob_pos = Vector()
+local lerped_walk_bob_ang = Angle()
+
+hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang)
     if not enabled:GetBool() then return end
 
     is_allowed = allowed[weapon:GetClass()]
 
     if not is_allowed then return end
 
-    local curtime = UnPredictedCurTime()
-    local frametime = FrameTime()
+    if override:GetBool() then
+        pos:Set(oldpos)
+        ang:Set(oldang)
+    end
+
+    local frametime = FrameTime() * engine.TickInterval() * 22
+
+    local curtime = CurTime()
     local up = ang:Up()
     local right = ang:Right()
     local forward = ang:Forward()
@@ -158,7 +222,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
 
     // bob offset
     local v = -gx * right + gy * up
-    
+
     // idle bobbing
     local drunk_view = Angle(math.sin(curtime / 0.9) * 3, math.cos(curtime / 0.8) * 3.6, math.sin(curtime / 0.5) * 3.3) * 0.5
     local drunk_pos = Vector(math.sin(curtime / 1.2) * 3.2, math.cos(curtime / 0.7) * 3, math.sin(curtime / 0.8) * 2) * 0.5
@@ -170,7 +234,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     // zoom offset
     if zoomed then
         frac_zoom = math.Clamp(frac_zoom + frametime * 2, 0, 1)
-        a:Mul(0.5) 
+        a:Mul(0.5)
         v:Mul(0.5)
     else
         frac_zoom = math.Clamp(frac_zoom - frametime * 2, 0, 1)
@@ -190,24 +254,43 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     end
 
     // walk viewbob
-    local vel = lp:GetVelocity():Length()
     local trying_to_move = lp:KeyDown(IN_FORWARD) or lp:KeyDown(IN_BACK) or lp:KeyDown(IN_MOVELEFT) or lp:KeyDown(IN_MOVERIGHT)
 
-    local maxspeed = math.max(1, lp:GetMaxSpeed()) // just in case some evil mod does this...
-    local mult = math.Clamp(vel, 0, maxspeed)
+    if !use_viewpunch:GetBool() then
+        local ms = 0
 
-    sprint_curtime = sprint_curtime + frametime * mult / 100 * walk_viewbob_speed_mult:GetFloat()
+        if game.SinglePlayer() then
+            ms = lp:GetNW2Float("ehw_stepsoundtime")
+        else
+            ms = hook.Run("PlayerStepSoundTime", lp, 0, lp:KeyDown(IN_WALK))
+        end
 
-    local walk_pos = Vector(0,
-                            math.sin(sprint_curtime * 2),
-                            math.cos(sprint_curtime * 2) / 2)
-    local walk_view = Angle(-walk_pos.x, -walk_pos.y, 0)
-    local _walk_pos, _ = LocalToWorld(walk_pos, Angle(), Vector(), ang)
+        if ms != 0 then
+            local maxspeed = math.max(1, lp:GetMaxSpeed()) // just in case some evil mod does this...
+            local vel = lp:GetVelocity():Length()
+            local mult = math.Clamp(vel, 0, maxspeed)
 
-    lmult = Lerp(frametime * 2, lmult, mult / 100)
+            add_sprint_curtime = frametime / ms * 2500
+            lerped_add_sprint_curtime = Lerp(frametime * 10, lerped_add_sprint_curtime, add_sprint_curtime)
 
-    a:Add(walk_view * 2 * lmult)
-    v:Add(_walk_pos * 2 * lmult)
+            sprint_curtime = sprint_curtime + lerped_add_sprint_curtime
+
+            local walk_pos = Vector(math.cos(sprint_curtime * 2) / 2, math.cos(sprint_curtime), math.cos(sprint_curtime) / 4)
+
+            local walk_view = Angle(-walk_pos.x, -walk_pos.y, 0)
+            local _walk_pos, _ = LocalToWorld(walk_pos, Angle(), Vector(), ang)
+
+            lmult = Lerp(frametime * 30, lmult, mult / 100)
+
+            lerped_walk_bob_pos = LerpVector(frametime * 70, lerped_walk_bob_pos, _walk_pos)
+            lerped_walk_bob_ang = LerpAngle(frametime * 70, lerped_walk_bob_ang, walk_view)
+
+            a:Add(lerped_walk_bob_ang * 2 * lmult)
+            v:Add(lerped_walk_bob_pos * 2 * lmult)
+        end
+    else
+
+    end
 
     // sprint "anims"
     // i eated glue when writing this
@@ -216,7 +299,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         local in_speed = lp:KeyDown(IN_SPEED)
         local in_attack = lp:KeyDown(IN_ATTACK) or lp:KeyDown(IN_ATTACK2)
         local mult = lerp_speed:GetFloat() / 10
-        
+
         if in_speed and trying_to_move then
             if wait_after_shoot <= 0 then
                 frac_sprint = math.Clamp(frac_sprint + frametime * mult * 2, 0, 1)
@@ -244,29 +327,38 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         a:Add(Angle(30, 20, 0) * ease(frac_sprint, downwards))
     end
 
+    // tilt
+    if tilt_vm:GetBool() and trying_to_move then
+
+    end
+
     // down offset
-    v:Sub(up * down_offset:GetFloat()) 
+    v:Sub(up * down_offset:GetFloat())
 
     // lerp it and set it
     lpos = LerpVector(frametime * lerp_speed:GetFloat(), lpos, v * 0.1)
     lang = LerpAngle(frametime * lerp_speed:GetFloat(), lang, a * 0.3)
-    
+
     pos:Add(lpos * effect_mult:GetFloat())
     ang:Add(lang * effect_mult:GetFloat())
 end)
+
+local last_realtime = 0
+local realtime = 0
 
 hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov, znear, zfar)
     if not enabled:GetBool() or not use_calcview:GetBool() or not is_allowed or frac_zoom <= 0 then return end
 
     local base_view = {}
     local need_to_run = false
+
     for name, func in pairs(hook.GetTable()["CalcView"]) do
-        if name == "ehw_idontlikethisatall" then 
+        if name == "ehw_idontlikethisatall" then
             need_to_run = true
-            continue 
+            continue
         end
-        if not need_to_run then 
-            continue 
+        if not need_to_run then
+            continue
         end
         local ret = func(ply, base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false)
         base_view = ret or base_view
@@ -282,7 +374,6 @@ hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov
         end
     end
 
-
     if base_view then
         origin, angles, fov, znear, zfar, drawviewer = base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false
     end
@@ -296,3 +387,72 @@ hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov
 
     return view
 end)
+
+local function footstep(ply, pos, foot, sound, volume, rf, jumped)
+	if ply != LocalPlayer() then return end
+
+	local speed = ply:GetMaxSpeed()
+	local typee = "normal"
+	local side = 0
+	if ply:KeyDown(IN_WALK) then typee = "slow" end
+	if ply:KeyDown(IN_SPEED) then typee = "run" end
+
+	if foot == 0 then
+		-- left foot
+		side = 1
+	elseif foot == 1 then
+		-- right foot
+		side = -1
+	end
+
+	local angle = Angle()
+	local mult = 1
+
+	if typee == "slow" then mult = mult * 0.2 end
+	if typee == "normal" then mult = mult * 0.3 end
+	if typee == "run" then mult = mult * 0.5 end
+
+    if ply:KeyDown(IN_FORWARD) then
+    	angle = angle + Angle(2, side, side)
+    end
+
+    if ply:KeyDown(IN_BACK) then
+    	angle = angle + Angle(-2, side, side)
+    end
+
+    if ply:KeyDown(IN_MOVELEFT) then
+    	angle = angle + Angle(side, side, -2)
+    end
+
+    if ply:KeyDown(IN_MOVERIGHT) then
+    	angle = angle + Angle(side, side, 2)
+    end
+
+    angle = angle * mult
+
+	if ply:KeyPressed(IN_JUMP) then
+		angle = angle + Angle(-3, 0, 0)
+	end
+
+	if angle:IsZero() then return end
+
+	angle.x = angle.x * 0.5
+	angle.y = angle.y * 0.7
+	angle.z = angle.z * 1.1
+
+	vp_punch_angle_velocity = vp_punch_angle_velocity + angle * 20 * math.Clamp(ply:GetMaxSpeed() / ply:GetRunSpeed() * 1.25, 0.5, 1)
+
+	angle.x = angle.x * 1.2
+	angle.y = angle.y * 2
+	angle.z = angle.z * 1.2
+
+	vp_punch_angle_velocity2 = vp_punch_angle_velocity2 + angle * 20 * math.Clamp(ply:GetMaxSpeed() / ply:GetRunSpeed() * 1.25, 0.5, 1)
+end
+
+if game.SinglePlayer() then
+    net.Receive("viewmodel_punch_footstep", function()
+        footstep(net.ReadEntity(), net.ReadVector(), net.ReadFloat(), net.ReadString(), net.ReadFloat(), NULL)
+    end)
+else
+    hook.Add("PlayerFootstep", "viewmodel_punch_footstep", footstep)
+end
