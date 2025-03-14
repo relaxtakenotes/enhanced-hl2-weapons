@@ -215,6 +215,8 @@ local tilt = Angle()
 
 local p30_y20 = Angle(30, 20, 0)
 
+local frametimes = {}
+
 hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang)
     if not enabled:GetBool() then return end
 
@@ -227,7 +229,21 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         ang:Set(oldang)
     end
 
-    local frametime = RealFrameTime()
+    local frametime = FrameTime()
+
+    table.insert(frametimes, frametime)
+
+    local ftcount = table.Count(frametimes)
+
+    if ftcount > 25 then table.remove(frametimes, 1) end
+
+    local avg_frametime = 0
+
+    for key, value in ipairs(frametimes) do
+        avg_frametime = avg_frametime + value
+    end
+
+    avg_frametime = avg_frametime / ftcount
 
     local curtime = UnPredictedCurTime()
     local up = ang:Up()
@@ -287,21 +303,22 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
             end
         end
 
-        if ms != 0 and ms != math.huge then
+        if ms != 0 and ms != math.huge and lp:OnGround() then
             local maxspeed = math.max(1, lp:GetMaxSpeed()) // just in case some evil mod does this...
             local vel = lp:GetVelocity():Length()
             local mult = math.Clamp(vel, 0, maxspeed)
 
             local coof = math.pi / (ms / 1000)
 
-            add_sprint_curtime = math.abs(frametime * coof - frametime * ms / 2000 - frametime)
+            add_sprint_curtime = math.abs(avg_frametime * coof - frametime * ms / 2000 - frametime)
             if not trying_to_move then
                 add_sprint_curtime = 0
             end
             
-            lerped_add_sprint_curtime = Lerp(frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
+            // smooth out the frametime maybe? if your frames drop it has a possibility of causing jittering
+            lerped_add_sprint_curtime = Lerp(avg_frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
             sprint_curtime = sprint_curtime + lerped_add_sprint_curtime
-            lerped_add_sprint_curtime = Lerp(frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
+            lerped_add_sprint_curtime = Lerp(avg_frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
 
             local walk_pos = Vector(math.cos(sprint_curtime * 2) / 2, math.cos(sprint_curtime), math.cos(sprint_curtime) / 4) + 
                 Vector(math.sin(sprint_curtime * 2) / 4, math.sin(sprint_curtime) / 2, math.sin(sprint_curtime / 2) / 16)
@@ -377,7 +394,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
 
         local diff = vel - eye 
 
-        if not trying_to_move or in_attack then 
+        if vel:IsZero() or in_attack then 
             diff:Zero()
             vel:Zero() 
             eye:Zero() 
