@@ -200,8 +200,7 @@ end)
 local vm_last_realtime = 0
 local vm_realtime = 0
 
-local lerped_add_sprint_curtime = 0
-local add_sprint_curtime = 0
+local lerped_coof = 0.00000628
 
 local lerped_walk_bob_pos = Vector()
 local lerped_walk_bob_ang = Angle()
@@ -229,21 +228,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
         ang:Set(oldang)
     end
 
-    local frametime = FrameTime()
-
-    table.insert(frametimes, frametime)
-
-    local ftcount = table.Count(frametimes)
-
-    if ftcount > 25 then table.remove(frametimes, 1) end
-
-    local avg_frametime = 0
-
-    for key, value in ipairs(frametimes) do
-        avg_frametime = avg_frametime + value
-    end
-
-    avg_frametime = avg_frametime / ftcount
+    local frametime = RealFrameTime()
 
     local curtime = UnPredictedCurTime()
     local up = ang:Up()
@@ -308,17 +293,16 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
             local vel = lp:GetVelocity():Length()
             local mult = math.Clamp(vel, 0, maxspeed)
 
-            local coof = math.pi / (ms / 1000)
+            if trying_to_move then
+                lerped_coof = Lerp(frametime * 5, lerped_coof, math.pi / (ms / 1000))
+            end
 
-            add_sprint_curtime = math.abs(avg_frametime * coof - frametime * ms / 2000 - frametime)
+            add_sprint_curtime = math.max(frametime * lerped_coof - frametime * ms / 2000 - frametime, 0)
             if not trying_to_move then
                 add_sprint_curtime = 0
             end
-            
-            // smooth out the frametime maybe? if your frames drop it has a possibility of causing jittering
-            lerped_add_sprint_curtime = Lerp(avg_frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
-            sprint_curtime = sprint_curtime + lerped_add_sprint_curtime
-            lerped_add_sprint_curtime = Lerp(avg_frametime * 5, lerped_add_sprint_curtime, add_sprint_curtime)
+
+            sprint_curtime = sprint_curtime + add_sprint_curtime
 
             local walk_pos = Vector(math.cos(sprint_curtime * 2) / 2, math.cos(sprint_curtime), math.cos(sprint_curtime) / 4) + 
                 Vector(math.sin(sprint_curtime * 2) / 4, math.sin(sprint_curtime) / 2, math.sin(sprint_curtime / 2) / 16)
