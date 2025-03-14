@@ -12,7 +12,11 @@ if game.SinglePlayer() then
         net.Broadcast()
     end)
 
-    hook.Add("PlayerTick", "send_stepsoundtime", function(ply, mv) 
-        ply:SetNW2Float( "ehw_stepsoundtime", hook.Run("PlayerStepSoundTime", ply, 0, ply:KeyDown(IN_WALK)) )
+    hook.Add("PlayerTick", "send_stepsoundtime", function(ply, mv)
+        if bm_vars and bm_vars.enabled:GetBool() then
+            ply:SetNW2Float("ehw_stepsoundtime", BmGetStepSoundTime(ply, 0, ply:KeyDown(IN_WALK)))
+        else
+            ply:SetNW2Float("ehw_stepsoundtime", hook.Run("PlayerStepSoundTime", ply, 0, ply:KeyDown(IN_WALK)))
+        end
     end)
 end

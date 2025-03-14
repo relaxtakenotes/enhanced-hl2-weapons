@@ -7,6 +7,7 @@ local down_offset = CreateConVar("cl_ehw_down_offset_mult", 1, FCVAR_ARCHIVE)
 local land_mult = CreateConVar("cl_ehw_land_mult", 1, FCVAR_ARCHIVE)
 local use_calcview = CreateConVar("cl_ehw_use_calcview", 1, FCVAR_ARCHIVE)
 local tilt_vm = CreateConVar("cl_ehw_tilt_vm", 1, FCVAR_ARCHIVE)
+local tilt_vm_mult = CreateConVar("cl_ehw_tilt_vm_mult", 1, FCVAR_ARCHIVE)
 
 local use_viewpunch = CreateConVar("cl_ehw_use_viewpunch_walk", 0, FCVAR_ARCHIVE)
 local viewpunch_strength = CreateConVar("cl_ehw_viewpunch_strength", 1, FCVAR_ARCHIVE)
@@ -197,6 +198,9 @@ local add_sprint_curtime = 0
 local lerped_walk_bob_pos = Vector()
 local lerped_walk_bob_ang = Angle()
 
+local lerped_tilt_pos = Vector()
+local lerped_tilt_ang = Angle()
+
 hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang)
     if not enabled:GetBool() then return end
 
@@ -259,10 +263,14 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     if !use_viewpunch:GetBool() then
         local ms = 0
 
-        if game.SinglePlayer() then
+        if sp then
             ms = lp:GetNW2Float("ehw_stepsoundtime")
         else
-            ms = hook.Run("PlayerStepSoundTime", lp, 0, lp:KeyDown(IN_WALK))
+            if bm_vars and bm_vars.enabled:GetBool() then
+                ms = BmGetStepSoundTime(lp, 0, lp:KeyDown(IN_WALK))
+            else
+                ms = hook.Run("PlayerStepSoundTime", lp, 0, lp:KeyDown(IN_WALK))
+            end
         end
 
         if ms != 0 and ms != math.huge then
@@ -272,7 +280,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
 
             local coof = math.pi / (ms / 1000)
 
-            add_sprint_curtime = frametime * coof - frametime * ms / 2000 - frametime
+            add_sprint_curtime = math.abs(frametime * coof - frametime * ms / 2000 - frametime)
             if not trying_to_move then
                 add_sprint_curtime = 0
             end
@@ -338,8 +346,29 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     end
 
     // tilt
-    if tilt_vm:GetBool() and trying_to_move then
+    if tilt_vm:GetBool()  then
+        local vel = lp:GetVelocity()
+        vel.z = 0
 
+        local eye = lp:EyeAngles():Forward()
+        eye.z = 0
+
+        local diff = vel - eye 
+
+        if not trying_to_move then diff = Vector() end
+
+        diff:Normalize()
+
+        local tilt = Angle( 0, 0, vel:Cross(eye).z / 20 * tilt_vm_mult:GetFloat() )
+
+        lerped_tilt_pos = LerpVector( frametime * 10, lerped_tilt_pos, diff * 5 )
+        lerped_tilt_ang = LerpAngle( frametime * 7, lerped_tilt_ang, tilt )
+        
+        //v:Add( lerped_tilt_pos )
+        a:Add( lerped_tilt_ang )
+
+        lerped_tilt_pos = LerpVector( frametime * 10, lerped_tilt_pos, diff * 5 )
+        lerped_tilt_ang = LerpAngle( frametime * 7, lerped_tilt_ang, tilt )
     end
 
     // down offset
