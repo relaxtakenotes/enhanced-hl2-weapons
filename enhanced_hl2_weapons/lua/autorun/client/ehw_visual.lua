@@ -2,7 +2,7 @@ hook.Add("InitPostEntity", "MissingAddonMessage" .. math.random(0, 1000), functi
     if not UNPOOPED_CALCVIEW then
         Derma_Message(
             "Hi. To use this mod, you need to install Extended CalcView by relaxtakenotes.\nOtherwise, nothing will happen.", 
-            "Smooth Out Stairs", 
+            "Enhanced HL2 Viewmodels", 
             "ok, bugger off"
         )
     end
