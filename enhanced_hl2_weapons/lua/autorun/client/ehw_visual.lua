@@ -1,3 +1,13 @@
+hook.Add("InitPostEntity", "MissingAddonMessage" .. math.random(0, 1000), function() 
+    if not UNPOOPED_CALCVIEW then
+        Derma_Message(
+            "Hi. To use this mod, you need to install Extended CalcView by relaxtakenotes.\nOtherwise, nothing will happen.", 
+            "Smooth Out Stairs", 
+            "ok, bugger off"
+        )
+    end
+end)
+
 local enabled = CreateConVar("cl_ehw_enabled", 1, FCVAR_ARCHIVE)
 local effect_mult = CreateConVar("cl_ehw_effect_mult", 1, FCVAR_ARCHIVE)
 local lerp_speed = CreateConVar("cl_ehw_interp_mult", 1, FCVAR_ARCHIVE)
@@ -44,6 +54,7 @@ local frac_land = 0
 local lerped_frac_land = 0
 
 local sprint_curtime = 0
+local sprint_curtime_2 = 0
 
 local prev_on_ground = true
 local current_on_ground = true
@@ -216,24 +227,24 @@ local p30_y20 = Angle(30, 20, 0)
 
 local frametimes = {}
 
-hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang, pos, ang)
+hook.Add("CalcViewModelViewEx", "ehw_visual", function(data)
     if not enabled:GetBool() then return end
 
-    is_allowed = allowed[weapon:GetClass()]
+    is_allowed = allowed[data:GetWeapon():GetClass()]
 
     if not is_allowed then return end
 
     if override:GetBool() then
-        pos:Set(oldpos)
-        ang:Set(oldang)
+        data:GetPosition():Set(data:GetOldPosition())
+        data:GetAngles():Set(data:GetOldAngles())
     end
 
     local frametime = RealFrameTime()
 
     local curtime = UnPredictedCurTime()
-    local up = ang:Up()
-    local right = ang:Right()
-    local forward = ang:Forward()
+    local up = data:GetAngles():Up()
+    local right = data:GetAngles():Right()
+    local forward = data:GetAngles():Forward()
     local lp = LocalPlayer()
 
     // angle offset
@@ -245,7 +256,7 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     // idle bobbing
     local drunk_view = Angle(math.sin(curtime / 0.9) * 3, math.cos(curtime / 0.8) * 3.6, math.sin(curtime / 0.5) * 3.3) * 0.5
     local drunk_pos = Vector(math.sin(curtime / 1.2) * 3.2, math.cos(curtime / 0.7) * 3, math.sin(curtime / 0.8) * 2) * 0.5
-    local _drunk_pos, _ = LocalToWorld(drunk_pos, Angle(), Vector(), ang)
+    local _drunk_pos, _ = LocalToWorld(drunk_pos, Angle(), Vector(), data:GetAngles())
 
     a:Add(drunk_view)
     v:Add(_drunk_pos)
@@ -302,36 +313,43 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
                 add_sprint_curtime = 0
             end
 
+            sprint_curtime_2 = sprint_curtime_2 + frametime * mult / 70
+
             sprint_curtime = sprint_curtime + add_sprint_curtime
 
-            local walk_pos = Vector(math.cos(sprint_curtime * 2) / 2, math.cos(sprint_curtime), math.cos(sprint_curtime) / 4) + 
-                Vector(math.sin(sprint_curtime * 2) / 4, math.sin(sprint_curtime) / 2, math.sin(sprint_curtime / 2) / 16)
+            local _walk_pos = Vector(
+                math.cos(sprint_curtime * 2) / 2 - math.sin(sprint_curtime / 2) / 3 + math.cos(sprint_curtime / 4) / 4,
+                math.cos(sprint_curtime) + math.sin(sprint_curtime / 2) / 3 + math.sin(sprint_curtime / 4) / 4,
+                math.cos(sprint_curtime) / 4 + math.sin(sprint_curtime) / 2
+            )
 
-            local walk_view = Angle(-walk_pos.x, -walk_pos.y, 0)
-            local _walk_pos, _ = LocalToWorld(walk_pos, Angle(), Vector(), ang)
+            local walk_view = Angle(
+                -_walk_pos.x - math.cos(sprint_curtime * 2) / 2 + math.sin(sprint_curtime) / 3 + math.cos(sprint_curtime / 2) / 4, 
+                -_walk_pos.y - math.sin(sprint_curtime) / 2 - math.sin(sprint_curtime / 4) / 2 + math.cos(sprint_curtime) / 4,
+                math.cos(sprint_curtime / 2) / 2 + math.sin(sprint_curtime) / 2
+            )
 
-            lerped_walk_bob_pos = LerpVector(math.min(frametime * 35 * lerp_speed:GetFloat(), 1), lerped_walk_bob_pos, _walk_pos)
-            lerped_walk_bob_ang = LerpAngle(math.min(frametime * 35 * lerp_speed:GetFloat(), 1), lerped_walk_bob_ang, walk_view)
-            
+            local walk_pos, _ = LocalToWorld(_walk_pos, angle_zero, vector_origin, data:GetAngles())
+
             lmult = Lerp(frametime * 15 * lerp_speed:GetFloat(), lmult, mult / 100)
             a:Add(lerped_walk_bob_ang * 2 * lmult)
             v:Add(lerped_walk_bob_pos * 2 * lmult)
             lmult = Lerp(frametime * 15 * lerp_speed:GetFloat(), lmult, mult / 100)
 
-            lerped_walk_bob_pos = LerpVector(math.min(frametime * 35 * lerp_speed:GetFloat(), 1), lerped_walk_bob_pos, _walk_pos)
+            lerped_walk_bob_pos = LerpVector(math.min(frametime * 35 * lerp_speed:GetFloat(), 1), lerped_walk_bob_pos, walk_pos)
             lerped_walk_bob_ang = LerpAngle(math.min(frametime * 35 * lerp_speed:GetFloat(), 1), lerped_walk_bob_ang, walk_view)
         end
     end
 
     // process viewpunch stuff
-    ang:Add(vp_punch_angle * 2 * viewpunch_strength:GetFloat())
+    data:GetAngles():Add(vp_punch_angle * 2 * viewpunch_strength:GetFloat())
 
     local fwd = vp_punch_angle2:Forward()
 
     fwd.x = fwd.x - 1
-    fwd:Rotate(ang)
+    fwd:Rotate(data:GetAngles())
 
-    pos:Add(fwd * -30 * viewpunch_strength:GetFloat())
+    data:GetPosition():Add(fwd * -30 * viewpunch_strength:GetFloat())
 
     // sprint "anims"
     // i eated glue when writing this
@@ -409,56 +427,17 @@ hook.Add("CalcViewModelView", "ehw_visual", function(weapon, vm, oldpos, oldang,
     lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2 * 10, lpos, v * 0.1)
     lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2 * 10, lang, a * 0.3)
 
-    pos:Add(lpos * effect_mult:GetFloat())
-    ang:Add(lang * effect_mult:GetFloat())
+    data:GetPosition():Add(lpos * effect_mult:GetFloat())
+    data:GetAngles():Add(lang * effect_mult:GetFloat())
 
     lpos = LerpVector(frametime * lerp_speed:GetFloat() / 2 * 10, lpos, v * 0.1)
     lang = LerpAngle(frametime * lerp_speed:GetFloat() / 2 * 10, lang, a * 0.3)
 end)
 
-local last_realtime = 0
-local realtime = 0
+hook.Add("CalcViewEx", "ehw_zoom", function(data)
+    if not enabled:GetBool() or not is_allowed or frac_zoom <= 0 then return end
 
-hook.Add("CalcView", "ehw_idontlikethisatall", function(ply, origin, angles, fov, znear, zfar)
-    if not enabled:GetBool() or not use_calcview:GetBool() or not is_allowed or frac_zoom <= 0 then return end
-
-    local base_view = {}
-    local need_to_run = false
-
-    for name, func in pairs(hook.GetTable()["CalcView"]) do
-        if name == "ehw_idontlikethisatall" then
-            need_to_run = true
-            continue
-        end
-        if not need_to_run then
-            continue
-        end
-        local ret = func(ply, base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false)
-        base_view = ret or base_view
-    end
-
-    local weapon = ply:GetActiveWeapon()
-
-    if IsValid(weapon) then
-        local func = weapon.CalcView
-        if func then
-            local origin, angles, fov = func(weapon, ply, base_view.origin or origin, base_view.angles or angles, base_view.fov or fov)
-            base_view.origin, base_view.angles, base_view.fov = origin or base_view.origin, angles or base_view.angles, fov or base_view.fov
-        end
-    end
-
-    if base_view then
-        origin, angles, fov, znear, zfar, drawviewer = base_view.origin or origin, base_view.angles or angles, base_view.fov or fov, base_view.znear or znear, base_view.zfar or zfar, base_view.drawviewer or false
-    end
-
-    local view = {
-        origin = origin,
-        angles = angles,
-        fov = fov - 20 * math.ease.InOutQuad(frac_zoom),
-        drawviewer = drawviewer
-    }
-
-    return view
+    data:SetFOV(data:GetFOV() - 20 * math.ease.InOutQuad(frac_zoom));
 end)
 
 local function footstep(ply, pos, foot, sound, volume, rf, jumped)
