@@ -239,9 +239,11 @@ hook.Add("CalcViewModelViewEx", "ehw_visual", function(data)
         data:GetAngles():Set(data:GetOldAngles())
     end
 
-    local frametime = RealFrameTime()
-
+    local frametime = FrameTime()
     local curtime = UnPredictedCurTime()
+
+    if not sp and not IsFirstTimePredicted() then frametime = 0 end
+
     local up = data:GetAngles():Up()
     local right = data:GetAngles():Right()
     local forward = data:GetAngles():Forward()
@@ -442,6 +444,8 @@ end)
 
 local function footstep(ply, pos, foot, sound, volume, rf, jumped)
     if ply != LocalPlayer() then return end
+
+    if not sp and not IsFirstTimePredicted() then return end
 
     local speed = ply:GetMaxSpeed()
     local typee = "normal"
